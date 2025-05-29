@@ -1,0 +1,61 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI/CD PostgreSQL
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: ${{ secrets.PGDATABASE }}
+          POSTGRES_USER: ${{ secrets.PGUSER }}
+          POSTGRES_PASSWORD: ${{ secrets.PGPASSWORD }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ secrets.PGUSER }} -d ${{ secrets.PGDATABASE }}"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v3
+
+      - name: Wait for PostgreSQL to be ready
+        run: |
+          for i in {1..10}; do
+            pg_isready -h localhost -p ${{ secrets.PGPORT }} -U ${{ secrets.PGUSER }} && break
+            echo "Waiting for Postgres..."
+            sleep 3
+          done
+
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Run init.sql
+        env:
+          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+        run: |
+          psql \
+            -h localhost \
+            -p ${{ secrets.PGPORT }} \
+            -U ${{ secrets.PGUSER }} \
+            -d ${{ secrets.PGDATABASE }} \
+            -f db/init.sql
+
+      # ← Aquí podrías añadir pasos para tests de integración, build de tu app, despliegue, etc.
