@@ -10,44 +10,39 @@ on:
 
 jobs:
   migrate:
-    runs-on: ubuntu-latest    # VM Ubuntu proporcionada por GitHub
+    runs-on: ubuntu-latest
 
     steps:
-      # 1) Obtener el código
       - name: Checkout del repo
         uses: actions/checkout@v3
 
-      # 2) Instalar PostgreSQL y cliente
-      - name: Instalar PostgreSQL
+      - name: Instalar PostgreSQL y cliente
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql postgresql-client
 
-      # 3) Arrancar el servicio de Postgres
-      - name: Iniciar servicio PostgreSQL
-        env:
-          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+      - name: Iniciar servicio PostgreSQL y preparar usuario/BD
         run: |
           sudo service postgresql start
-          # Asegura que el usuario exista
-          psql -U postgres -tc "SELECT 1 FROM pg_roles WHERE rolname='${{ secrets.DB_USER }}'" \
-            | grep -q 1 || \
-          psql -U postgres -c "CREATE USER \"${{ secrets.DB_USER }}\" WITH PASSWORD '${{ secrets.DB_PASSWORD }}';"
-          # Asegura que la base exista
-          psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='${{ secrets.DB_NAME }}'" \
-            | grep -q 1 || \
-          psql -U postgres -c "CREATE DATABASE \"${{ secrets.DB_NAME }}\" OWNER \"${{ secrets.DB_USER }}\";"
 
-      # 4) Aplicar cada script de migración
+          # 1) Crear usuario si no existe (SO-user postgres)
+          sudo -u postgres psql -tc "SELECT 1 FROM pg_roles WHERE rolname='${{ secrets.DB_USER }}'" \
+            | grep -q 1 || \
+          sudo -u postgres psql -c "CREATE USER \"${{ secrets.DB_USER }}\" WITH PASSWORD '${{ secrets.DB_PASSWORD }}';"
+
+          # 2) Crear base si no existe
+          sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='${{ secrets.DB_NAME }}'" \
+            | grep -q 1 || \
+          sudo -u postgres psql -c "CREATE DATABASE \"${{ secrets.DB_NAME }}\" OWNER \"${{ secrets.DB_USER }}\";"
+
       - name: Ejecutar migraciones
         env:
           PGPASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
-          echo "→ Migrando ${DB_HOST}:${DB_PORT}/${DB_NAME}"
           for script in db/updates/*.sql; do
-            echo "   Ejecutando $script"
+            echo "→ Aplicando $script"
             psql \
-              -h ${{ secrets.DB_HOST }} \
+              -h localhost \
               -p ${{ secrets.DB_PORT }} \
               -U ${{ secrets.DB_USER }} \
               -d ${{ secrets.DB_NAME }} \
@@ -55,14 +50,9 @@ jobs:
               -f "$script"
           done
 
-      # 5) Verificar esquema y conexión
       - name: Verificar estado final
         env:
           PGPASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
-          psql \
-            -h ${{ secrets.DB_HOST }} \
-            -p ${{ secrets.DB_PORT }} \
-            -U ${{ secrets.DB_USER }} \
-            -d ${{ secrets.DB_NAME }} \
+          psql -h localhost -p ${{ secrets.DB_PORT }} -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} \
             -c "SELECT current_schema(), now();"
