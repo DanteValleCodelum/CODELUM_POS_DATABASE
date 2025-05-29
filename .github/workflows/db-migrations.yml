@@ -50,7 +50,7 @@ jobs:
               -f "$script"
           done
 
-      - name: Verificar estado final
+      - name: Verificar estado finish
         env:
           PGPASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
