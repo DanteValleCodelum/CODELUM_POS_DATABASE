@@ -1,61 +1,68 @@
-# This is a basic workflow to help you get started with Actions
+name: DB Migrations on GitHub VM
 
-name: CI/CD PostgreSQL
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
+    paths:
+      - 'db/updates/**'
+    branches:
+      - main
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  postgres:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_DB: ${{ secrets.PGDATABASE }}
-          POSTGRES_USER: ${{ secrets.PGUSER }}
-          POSTGRES_PASSWORD: ${{ secrets.PGPASSWORD }}
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U ${{ secrets.PGUSER }} -d ${{ secrets.PGDATABASE }}"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+  migrate:
+    runs-on: ubuntu-latest    # VM Ubuntu proporcionada por GitHub
 
     steps:
-      - name: Check out repo
+      # 1) Obtener el código
+      - name: Checkout del repo
         uses: actions/checkout@v3
 
-      - name: Wait for PostgreSQL to be ready
+      # 2) Instalar PostgreSQL y cliente
+      - name: Instalar PostgreSQL
         run: |
-          for i in {1..10}; do
-            pg_isready -h localhost -p ${{ secrets.PGPORT }} -U ${{ secrets.PGUSER }} && break
-            echo "Waiting for Postgres..."
-            sleep 3
+          sudo apt-get update
+          sudo apt-get install -y postgresql postgresql-client
+
+      # 3) Arrancar el servicio de Postgres
+      - name: Iniciar servicio PostgreSQL
+        env:
+          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          sudo service postgresql start
+          # Asegura que el usuario exista
+          psql -U postgres -tc "SELECT 1 FROM pg_roles WHERE rolname='${{ secrets.DB_USER }}'" \
+            | grep -q 1 || \
+          psql -U postgres -c "CREATE USER \"${{ secrets.DB_USER }}\" WITH PASSWORD '${{ secrets.DB_PASSWORD }}';"
+          # Asegura que la base exista
+          psql -U postgres -tc "SELECT 1 FROM pg_database WHERE datname='${{ secrets.DB_NAME }}'" \
+            | grep -q 1 || \
+          psql -U postgres -c "CREATE DATABASE \"${{ secrets.DB_NAME }}\" OWNER \"${{ secrets.DB_USER }}\";"
+
+      # 4) Aplicar cada script de migración
+      - name: Ejecutar migraciones
+        env:
+          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          echo "→ Migrando ${DB_HOST}:${DB_PORT}/${DB_NAME}"
+          for script in db/updates/*.sql; do
+            echo "   Ejecutando $script"
+            psql \
+              -h ${{ secrets.DB_HOST }} \
+              -p ${{ secrets.DB_PORT }} \
+              -U ${{ secrets.DB_USER }} \
+              -d ${{ secrets.DB_NAME }} \
+              -v ON_ERROR_STOP=1 \
+              -f "$script"
           done
 
-      - name: Install psql client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
-
-      - name: Run init.sql
+      # 5) Verificar esquema y conexión
+      - name: Verificar estado final
         env:
-          PGPASSWORD: ${{ secrets.PGPASSWORD }}
+          PGPASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           psql \
-            -h localhost \
-            -p ${{ secrets.PGPORT }} \
-            -U ${{ secrets.PGUSER }} \
-            -d ${{ secrets.PGDATABASE }} \
-            -f db/init.sql
-
-      # ← Aquí podrías añadir pasos para tests de integración, build de tu app, despliegue, etc.
+            -h ${{ secrets.DB_HOST }} \
+            -p ${{ secrets.DB_PORT }} \
+            -U ${{ secrets.DB_USER }} \
+            -d ${{ secrets.DB_NAME }} \
+            -c "SELECT current_schema(), now();"
